@@ -37,6 +37,12 @@ aatDiffMat = np.subtract.outer(aatData, aatData)
 c_data = np.unique(aatDiffMat.flatten())
 spline_coef = torch.tensor(c_data)
 
+sigma1 = 0.2
+sigma2 = 0.3
+k = 2.0
+sigma_left = sigma1 / k
+sigma_right = sigma2 / k
+
 def changeMEM(model, synapse):
     synapse = synapse.to(next(model.parameters()).device)
     for name, param in model.named_parameters():
@@ -72,8 +78,8 @@ class KANLinear(torch.nn.Module):
         grid_eps=0.02,
         grid_range=[-1, 1], # Default grid range
         spline_weight_init_scale=0.1,
-        sigma_left='sigma1 / k', # Import manually
-        sigma_right='sigma2 / k', # Import manually
+        sigma_left=0.1,
+        sigma_right=0.1,
     ):
         super(KANLinear, self).__init__()
         self.in_features = in_features
@@ -182,6 +188,8 @@ class KAN(torch.nn.Module):
         base_activation=torch.nn.ReLU,
         grid_eps=0.02,
         grid_range=[-1, 1], # Default
+        sigma_left=0.1,
+        sigma_right=0.1,
     ):
         super(KAN, self).__init__()
         self.grid_size = grid_size
@@ -200,6 +208,8 @@ class KAN(torch.nn.Module):
                     base_activation=base_activation,
                     grid_eps=grid_eps,
                     grid_range=grid_range,
+                    sigma_left=sigma_left,
+                    sigma_right=sigma_right,
                 )
             )
 
@@ -270,6 +280,7 @@ plt.show()
 import torch
 ys = []
 model = KAN([1, 1],grid_size=100, scale_noise=0.1,
+            sigma_left=sigma_left, sigma_right=sigma_right,
             )
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
@@ -320,7 +331,7 @@ plt.subplots(1, 5, figsize=(15, 2))
 plt.subplots_adjust(wspace=0, hspace=0)
 
 for i in range(1,6):
-    plt.subplot(1,5,i)
+    plt.subplot(5,1,i)
     group_id = i - 1
     plt.plot(x_grid.detach().numpy(), y.detach().numpy(), color='black', alpha=0.1)
     plt.plot(x_grid.detach().numpy(), ys[i-1], color='black')
