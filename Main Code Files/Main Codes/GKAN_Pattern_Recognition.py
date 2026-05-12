@@ -23,14 +23,14 @@ import numpy as np
 
 '''Please import the actually measured device (memristors & GMCs) data manually.'''
 # Load memristor conductance data
-df = pd.read_excel('memristor conductance.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\memristor conductance.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 memData = df.to_numpy().flatten()
 memData = (memData - min(memData)) / (max(memData) - min(memData))
 memDiffMat = np.subtract.outer(memData, memData)
 mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
 # Load GMC peak current data
-df = pd.read_excel('GMC peak current.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 aatData = df.to_numpy().flatten()
 aatData = (aatData - min(aatData)) / (max(aatData) - min(aatData))
 aatDiffMat = np.subtract.outer(aatData, aatData)
@@ -90,7 +90,7 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
 
     return new_vals
 
-CV_amp = 'CV of Ipeak * q' # Import manually
+CV_amp = 0.05    # 代表 5% 的变异系数 (Coefficient of Variation)
 tol = 1e-6
 def changeAAT(model, spline_coef):
     spline_coef = spline_coef.to(next(model.parameters()).device)
