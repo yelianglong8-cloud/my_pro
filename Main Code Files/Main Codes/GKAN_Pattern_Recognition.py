@@ -20,6 +20,15 @@ import torch.nn.functional as F
 import math
 import pandas as pd
 import numpy as np
+import os
+import time
+import torch.nn as nn
+import torch.optim as optim
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from openpyxl import load_workbook
 
 '''Please import the actually measured device (memristors & GMCs) data manually.'''
 # Load memristor conductance data
@@ -29,6 +38,7 @@ memData = (memData - min(memData)) / (max(memData) - min(memData))
 memDiffMat = np.subtract.outer(memData, memData)
 mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
+
 # Load GMC peak current data
 df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 aatData = df.to_numpy().flatten()
@@ -90,8 +100,17 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
 
     return new_vals
 
+# ----------------- 全局设备参数定义 -----------------
 CV_amp = 0.05    # 代表 5% 的变异系数 (Coefficient of Variation)
+sigma1 = 0.5     # 论文中高斯核的宽度参数
+sigma2 = 0.5     # 论文中高斯核的宽度参数
+CV_sigma1 = 0.02 # sigma 的变异系数
+CV_sigma2 = 0.02 # sigma 的变异系数
+k = 1.0          # 缩放因子
+q = 1.0          # 比例因子
 tol = 1e-6
+# ---------------------------------------------------
+
 def changeAAT(model, spline_coef):
     spline_coef = spline_coef.to(next(model.parameters()).device)
     for name, param in model.named_parameters():
@@ -123,21 +142,17 @@ class KANLinear(torch.nn.Module):
         grid_eps=0.02,
         grid_range=[-1, 1], # Default
         spline_weight_init_scale=0.1,
-        sigma_left='sigma1 / k', # Import manually
-        sigma_right='sigma2 / k' # Import manually
+        sigma_left=sigma1 / k,   # 修改：使用实际变量计算
+        sigma_right=sigma2 / k   # 修改：使用实际变量计算
     ):
         super(KANLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
         self.grid_size = grid_size
         self.spline_weight_init_scale = spline_weight_init_scale
-        # self.spline_order = spline_order
         grid = torch.linspace(grid_range[0], grid_range[1], grid_size)
         self.register_buffer("grid", grid)
         self.base_weight = torch.nn.Parameter(torch.Tensor(out_features, in_features))
-        # self.spline_weight = torch.nn.Parameter(
-        #     torch.Tensor(out_features, in_features, grid_size + spline_order)
-        # )
         self.spline_weight = torch.nn.Parameter(
             torch.Tensor(out_features, in_features, grid_size)
         )
@@ -167,17 +182,20 @@ class KANLinear(torch.nn.Module):
         assert x.dim() == 2 and x.size(1) == self.in_features
         grid: torch.Tensor = self.grid
         bases = torch.zeros(x.size(0), self.in_features, grid.size(0), device=x.device)
-        CV_sigma_left = 'CV of sigma1 * q' # Import manually
-        CV_sigma_right = 'CV of sigma2 * q' # Import manually
+
+        # 修改：替换原本的字符串为实际数值计算
+        CV_sigma_left = CV_sigma1 * q
+        CV_sigma_right = CV_sigma2 * q
+
         eps = 1e-12 # Avoid division by zero error
         V_mu = 0.55
         for i in range(grid.size(0)):
             center = grid[i]
-            sigma = torch.where(x <= center, self.sigma_left, self.sigma_right)
+            sigma = torch.where(x <= center, torch.tensor(self.sigma_left, device=x.device), torch.tensor(self.sigma_right, device=x.device))
             noise_std_sigma = torch.where(
                 x <= center,
-                CV_sigma_left * self.sigma_left,
-                CV_sigma_right * self.sigma_right
+                torch.tensor(CV_sigma_left * self.sigma_left, device=x.device),
+                torch.tensor(CV_sigma_right * self.sigma_right, device=x.device)
             )
             noise_sigma = torch.normal(mean=0.0, std=noise_std_sigma)
             sigma = sigma + noise_sigma + 1e-6  # 加噪后的sigma
@@ -193,17 +211,10 @@ class KANLinear(torch.nn.Module):
     def curve2coeff(self, x: torch.Tensor, y: torch.Tensor):
             assert x.dim() == 2 and x.size(1) == self.in_features
             assert y.size() == (x.size(0), self.in_features, self.out_features)
-            A = self.PrewiseRadialBasisFunction(x).transpose(
-                0, 1
-            )
-            B = y.transpose(0,
-                            1)
-            solution = torch.linalg.lstsq(
-                A, B
-            ).solution
-            result = solution.permute(
-                2, 0, 1
-            )
+            A = self.PrewiseRadialBasisFunction(x).transpose(0, 1)
+            B = y.transpose(0, 1)
+            solution = torch.linalg.lstsq(A, B).solution
+            result = solution.permute(2, 0, 1)
             assert result.size() == (
                 self.out_features,
                 self.in_features,
@@ -230,7 +241,6 @@ class KANLinear(torch.nn.Module):
             self.scaled_spline_weight_clamped().view(self.out_features, -1),
         )
         return base_output + spline_output  # After the setup, the network includes residual connections based on the memristor differential pairs.
-        # return spline_output  # After the setup, the network only contains the GMC arrays.
 
 class KAN(torch.nn.Module):
     def __init__(
@@ -271,13 +281,6 @@ class KAN(torch.nn.Module):
             x = layer(x)
         return x
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-
 def export_spline_weights(model, filename, sheet_name):
     spline_weights = model.layers[-1].spline_weight.detach().cpu().numpy()
     reshaped_weights = spline_weights.reshape(spline_weights.shape[2], -1)
@@ -303,7 +306,6 @@ valset = torchvision.datasets.MNIST(
 trainloader = DataLoader(trainset, batch_size=64, shuffle=True)
 valloader = DataLoader(valset, batch_size=64, shuffle=False)
 
-import time
 model = KAN([28 * 28, 100, 10]) # Define network size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
@@ -311,9 +313,6 @@ print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 optimizer = optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-4)
 criterion = nn.CrossEntropyLoss()
 
-from tqdm import tqdm
-import  pandas as pd
-import numpy as np
 train_losses = []
 train_accuracies = []
 val_losses = []
@@ -324,7 +323,6 @@ iter_accuracies = []
 # Initialize the arrays
 changeMEM(model, synapse)
 changeAAT(model, spline_coef)
-# export_spline_weights(model, './spline_out.xlsx', 'c_pre')
 
 for epoch in range(50):
     start_time = time.time()
@@ -343,14 +341,14 @@ for epoch in range(50):
             changeAAT(model, spline_coef)
             train_loss += loss.item()
             accuracy = (output.argmax(dim=1) == labels.to(device)).float().mean().item()
-            # iter_accuracies.append(accuracy)
-            train_accuracy += (output.argmax(dim=1) == labels.to(device)).float().mean().item()
-            pbar.set_postfix(loss=loss.item(), accuracy=(output.argmax(dim=1) == labels.to(device)).float().mean().item(), lr=optimizer.param_groups[0]['lr'])
+            train_accuracy += accuracy
+            pbar.set_postfix(loss=loss.item(), accuracy=accuracy, lr=optimizer.param_groups[0]['lr'])
 
     train_loss /= len(trainloader)
     train_accuracy /= len(trainloader)
     train_losses.append(train_loss)
     train_accuracies.append(train_accuracy)
+
     model.eval()
     val_loss = 0
     val_accuracy = 0
@@ -370,8 +368,6 @@ for epoch in range(50):
     epoch_times.append(epoch_time)
     print(f"Epoch {epoch + 1}, Val Loss: {val_loss}, Val Accuracy: {val_accuracy}")
 
-from openpyxl import load_workbook
-import os
 def save_to_excel(data, filename, sheet_name, startcol):
     if os.path.exists(filename):
         try:
@@ -383,13 +379,9 @@ def save_to_excel(data, filename, sheet_name, startcol):
     else:
         writer = pd.ExcelWriter(filename, engine='openpyxl')
     data.to_excel(writer, sheet_name=sheet_name, index=False, header=False, startcol=startcol)
-    # writer.save()
     writer.close()
 
 df_accuracy = pd.DataFrame(train_accuracies, columns=['Accuracy'])
 save_to_excel(df_accuracy, './ACC.xlsx', sheet_name='PR_MNIST', startcol=0)
 
-# df_iter_accuracies = pd.DataFrame(iter_accuracies, columns=['Accuracy'])
-# save_to_excel(df_iter_accuracies, './ACC.xlsx', sheet_name='PR_MNIST', startcol=0)
-# export_spline_weights(model, './spline_out.xlsx', 'c_post')
 print("Completed")
