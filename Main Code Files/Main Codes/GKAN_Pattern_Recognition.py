@@ -101,11 +101,11 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
     return new_vals
 
 # ----------------- 全局设备参数定义 -----------------
-CV_amp = 0.05    # 代表 5% 的变异系数 (Coefficient of Variation)
+CV_amp = 0.01    # 代表 5% 的变异系数 (Coefficient of Variation)
 sigma1 = 0.5     # 论文中高斯核的宽度参数
 sigma2 = 0.5     # 论文中高斯核的宽度参数
-CV_sigma1 = 0.02 # sigma 的变异系数
-CV_sigma2 = 0.02 # sigma 的变异系数
+CV_sigma1 = 0.01 # sigma 的变异系数
+CV_sigma2 = 0.01 # sigma 的变异系数
 k = 1.0          # 缩放因子
 q = 1.0          # 比例因子
 tol = 1e-6
@@ -310,7 +310,12 @@ model = KAN([28 * 28, 100, 10]) # Define network size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
+#optimizer = optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-4)
+
+# 在定义 optimizer 之后添加
 optimizer = optim.AdamW(model.parameters(), lr=0.005, weight_decay=1e-4)
+# 使用余弦退火或步骤衰减
+scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=50)
 criterion = nn.CrossEntropyLoss()
 
 train_losses = []
@@ -337,6 +342,8 @@ for epoch in range(50):
             loss = criterion(output, labels.to(device))
             loss.backward()
             optimizer.step()
+            # 每个 epoch 结束时更新学习率
+            scheduler.step()
             changeMEM(model, synapse)
             changeAAT(model, spline_coef)
             train_loss += loss.item()

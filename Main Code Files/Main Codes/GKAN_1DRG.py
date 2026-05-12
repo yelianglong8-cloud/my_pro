@@ -26,6 +26,7 @@ import numpy as np
 df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\memristor conductance.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 memData = df.to_numpy().flatten()
 memData = (memData - min(memData)) / (max(memData) - min(memData))
+'''差分矩阵计算，获取硬件实际可实现的离散权重值集合'''
 memDiffMat = np.subtract.outer(memData, memData)
 mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
@@ -38,12 +39,13 @@ c_data = np.unique(aatDiffMat.flatten())
 spline_coef = torch.tensor(c_data)
 
 sigma1 = 0.2
-sigma2 = 0.3
+sigma2 = 0.2
 k = 2.0
 sigma_left = sigma1 / k
 sigma_right = sigma2 / k
 
 def changeMEM(model, synapse):
+    # 将base_weight参数映射到忆阻器电导值
     synapse = synapse.to(next(model.parameters()).device)
     for name, param in model.named_parameters():
         if not 'spline_weight' in name:
@@ -54,6 +56,7 @@ def changeMEM(model, synapse):
             param.data.copy_(new_tensor)
 
 def changeAAT(model, spline_coef):
+    # 将spline_weight参数映射到GMC峰值电流值
     spline_coef = spline_coef.to(next(model.parameters()).device)
     for name, param in model.named_parameters():
         if 'spline_weight' in name:
@@ -73,7 +76,7 @@ class KANLinear(torch.nn.Module):
         scale_noise=0.1,
         scale_base=1.0,
         scale_spline=1.0,
-        enable_standalone_scale_spline=False,
+        enable_standalone_scale_spline=False, # 是否启用独立样条缩放
         base_activation=torch.nn.ReLU,
         grid_eps=0.02,
         grid_range=[-1, 1], # Default grid range
@@ -88,7 +91,9 @@ class KANLinear(torch.nn.Module):
         self.spline_weight_init_scale = spline_weight_init_scale
         # self.spline_order = spline_order
         grid = torch.linspace(grid_range[0], grid_range[1], grid_size)
-        self.register_buffer("grid", grid)
+        self.register_buffer("grid", grid) # 注册为缓冲区，不参与梯度更新
+
+        #base_weight用于传统线性变换，spline_weight用于高斯径向基函数加权
         self.base_weight = torch.nn.Parameter(torch.Tensor(out_features, in_features))
         # self.spline_weight = torch.nn.Parameter(
         #     torch.Tensor(out_features, in_features, grid_size + spline_order)
@@ -113,9 +118,10 @@ class KANLinear(torch.nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        torch.nn.init.kaiming_uniform_(self.base_weight, a=math.sqrt(5) * self.scale_base)
-        torch.nn.init.trunc_normal_(self.spline_weight, mean=0, std=self.spline_weight_init_scale)
-
+        torch.nn.init.kaiming_uniform_(self.base_weight, a=math.sqrt(5) * self.scale_base) #Kaiming Uniform 初始化
+        torch.nn.init.trunc_normal_(self.spline_weight, mean=0, std=self.spline_weight_init_scale) #截断正态分布初始化
+    
+    #高斯径向基函数
     def PrewiseRadialBasisFunction(self, x: torch.Tensor):
         '''
         :param x:
@@ -123,6 +129,7 @@ class KANLinear(torch.nn.Module):
         '''
         assert x.dim() == 2 and x.size(1) == self.in_features
         grid: torch.Tensor = self.grid
+        
         bases = torch.zeros(x.size(0), self.in_features, self.grid_size, device=x.device)
         for i in range(self.grid_size):
             center = grid[i]
@@ -132,22 +139,26 @@ class KANLinear(torch.nn.Module):
             x.size(0),
             self.in_features,
             self.grid_size,
-        )
+        ) # spline_weight = (out_features, in_features, grid_size)
         return bases.contiguous()
 
     def curve2coeff(self, x: torch.Tensor, y: torch.Tensor):
+        '''
+        通过最小二乘法从输入输出对(x, y)求解样条权重系数
+        相当于求解线性方程组: A * coeff = B
+        '''
         assert x.dim() == 2 and x.size(1) == self.in_features
         assert y.size() == (x.size(0), self.in_features, self.out_features)
         A = self.PrewiseRadialBasisFunction(x).transpose(
             0, 1
-        )
-        B = y.transpose(0, 1)
+        ) # [in_features, batch_size, grid_size]
+        B = y.transpose(0, 1)  # [in_features, batch_size, out_features]
         solution = torch.linalg.lstsq(
             A, B
-        ).solution
+        ).solution # 最小二乘解
         result = solution.permute(
             2, 0, 1
-        )
+        ) # [out_features, in_features, grid_size]
         assert result.size() == (
             self.out_features,
             self.in_features,
@@ -157,6 +168,7 @@ class KANLinear(torch.nn.Module):
 
     @property
     def scaled_spline_weight(self):
+        # 如果启用独立缩放，为每个输入输出对学习单独的缩放因子
         return self.spline_weight * (
             self.spline_scaler.unsqueeze(-1)
             if self.enable_standalone_scale_spline
@@ -195,6 +207,7 @@ class KAN(torch.nn.Module):
         self.grid_size = grid_size
         self.spline_order = spline_order
         self.layers = torch.nn.ModuleList()
+        #循环配对生成前后相邻的“输入-输出”维度对
         for in_features, out_features in zip(layers_hidden, layers_hidden[1:]):
             self.layers.append(
                 KANLinear(
@@ -216,7 +229,7 @@ class KAN(torch.nn.Module):
     def forward(self, x: torch.Tensor, update_grid=False):
         for layer in self.layers:
             if update_grid:
-                layer.update_grid(x)
+                layer.update_grid(x) #动态地调整每个 KANLinear层中高斯径向基函数的中心点（即 self.grid）
             x = layer(x)
         return x
 
@@ -260,22 +273,22 @@ y_sample = 0.
 for center in x_centers:
     y_sample += torch.exp(-(x_sample - center) ** 2 * 300)
 
-plt.plot(x_grid.detach().numpy(), y.detach().numpy())
-plt.scatter(x_sample.detach().numpy(), y_sample.detach().numpy())
-plt.show()
+# plt.plot(x_grid.detach().numpy(), y.detach().numpy())
+# plt.scatter(x_sample.detach().numpy(), y_sample.detach().numpy())
+# plt.show()
 
-plt.subplots(1, 5, figsize=(15, 2))
-plt.subplots_adjust(wspace=0, hspace=0)
+# plt.subplots(1, 5, figsize=(15, 2))
+# plt.subplots_adjust(wspace=0, hspace=0)
 
-
-for i in range(1,6):
-    plt.subplot(1,5,i)
-    group_id = i - 1
-    plt.plot(x_grid.detach().numpy(), y.detach().numpy(), color='black', alpha=0.1)
-    plt.scatter(x_sample[group_id*n_num_per_peak:(group_id+1)*n_num_per_peak].detach().numpy(), y_sample[group_id*n_num_per_peak:(group_id+1)*n_num_per_peak].detach().numpy(), color="black", s=2)
-    plt.xlim(-1,1)
-    plt.ylim(-1,2)
-plt.show()
+# #分组可视化（5个子图）
+# for i in range(1,6):
+#     plt.subplot(1,5,i)
+#     group_id = i - 1
+#     plt.plot(x_grid.detach().numpy(), y.detach().numpy(), color='black', alpha=0.1)
+#     plt.scatter(x_sample[group_id*n_num_per_peak:(group_id+1)*n_num_per_peak].detach().numpy(), y_sample[group_id*n_num_per_peak:(group_id+1)*n_num_per_peak].detach().numpy(), color="black", s=2)
+#     plt.xlim(-1,1)
+#     plt.ylim(-1,2)
+# plt.show()
 
 import torch
 ys = []
@@ -287,7 +300,7 @@ model.to(device)
 print(f"Number of parameters: {sum(p.numel() for p in model.parameters())}")
 
 criterion = torch.nn.L1Loss()
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.02, weight_decay=1e-4)
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.03, weight_decay=1e-4)
 
 import torch
 from tqdm import tqdm
@@ -314,9 +327,9 @@ for group_id in range(n_peak):
     dataset['test_input'] = dataset['test_input'].to(device)
     dataset['test_label'] = dataset['test_label'].to(device)
 
-    changeAAT(model, spline_coef)
+    #changeAAT(model, spline_coef)
     model.train()
-    for i in range(200):
+    for i in range(500):
         outputs = model(dataset['train_input'])
         loss = criterion(outputs, dataset['train_label'])
         optimizer.zero_grad()
@@ -324,19 +337,28 @@ for group_id in range(n_peak):
         optimizer.step()
         changeMEM(model, synapse)
         changeAAT(model, spline_coef)
-    print(f'Loss: {loss.item()}')
+        if i %20 ==0:
+            print(f'epoch {i + 1}: Loss: {loss.item()}')
+    #print(f'Loss: {loss.item()}')
     y_pred = model(x_grid[:, None].to(device))
     ys.append(y_pred.detach().cpu().numpy()[:, 0])
 plt.subplots(1, 5, figsize=(15, 2))
 plt.subplots_adjust(wspace=0, hspace=0)
 
-for i in range(1,6):
-    plt.subplot(5,1,i)
+plt.figure(figsize=(10, 8))
+
+for i in range(1, 6):
+    ax = plt.subplot(5, 1, i)
     group_id = i - 1
-    plt.plot(x_grid.detach().numpy(), y.detach().numpy(), color='black', alpha=0.1)
-    plt.plot(x_grid.detach().numpy(), ys[i-1], color='black')
-    plt.xlim(-1,1)
-    plt.ylim(-1,2)
+    ax.plot(x_grid.detach().numpy(), y.detach().numpy(), color='gray', alpha=0.25, linewidth=1.5)
+    ax.plot(x_grid.detach().numpy(), ys[i-1], color='black', linewidth=1.8)
+    ax.set_xlim(-1, 1)
+    ax.set_ylim(-1, 2)
+
+    if i < 5:
+        ax.tick_params(labelbottom=False)  # 前4行不显示x轴刻度标签
+
+plt.tight_layout()
 plt.show()
 df = pd.DataFrame(x_grid.detach().numpy(), columns=['X_grid'])
 df['Ideal'] = y.detach().numpy()
