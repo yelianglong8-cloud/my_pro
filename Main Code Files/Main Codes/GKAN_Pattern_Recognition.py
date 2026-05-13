@@ -32,7 +32,7 @@ from openpyxl import load_workbook
 
 '''Please import the actually measured device (memristors & GMCs) data manually.'''
 # Load memristor conductance data
-df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\memristor conductance.xlsx', sheet_name='sheet_name', usecols='A', header=None)
+df = pd.read_excel(r'/dssg/home/wangyiwei/GKAN/my_pro/memristor conductance.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 memData = df.to_numpy().flatten()
 memData = (memData - min(memData)) / (max(memData) - min(memData))
 memDiffMat = np.subtract.outer(memData, memData)
@@ -40,7 +40,7 @@ mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
 
 # Load GMC peak current data
-df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
+df = pd.read_excel(r'/dssg/home/wangyiwei/GKAN/my_pro/GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 aatData = df.to_numpy().flatten()
 aatData = (aatData - min(aatData)) / (max(aatData) - min(aatData))
 aatDiffMat = np.subtract.outer(aatData, aatData)
@@ -102,8 +102,8 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
 
 # ----------------- 全局设备参数定义 -----------------
 CV_amp = 0.01    # 代表 5% 的变异系数 (Coefficient of Variation)
-sigma1 = 0.5     # 论文中高斯核的宽度参数
-sigma2 = 0.5     # 论文中高斯核的宽度参数
+sigma1 = 0.8     # 论文中高斯核的宽度参数
+sigma2 = 0.8     # 论文中高斯核的宽度参数
 CV_sigma1 = 0.01 # sigma 的变异系数
 CV_sigma2 = 0.01 # sigma 的变异系数
 k = 1.0          # 缩放因子
@@ -329,7 +329,7 @@ iter_accuracies = []
 changeMEM(model, synapse)
 changeAAT(model, spline_coef)
 
-for epoch in range(50):
+for epoch in range(60):
     start_time = time.time()
     model.train()
     train_loss = 0
@@ -342,14 +342,15 @@ for epoch in range(50):
             loss = criterion(output, labels.to(device))
             loss.backward()
             optimizer.step()
-            # 每个 epoch 结束时更新学习率
-            scheduler.step()
-            changeMEM(model, synapse)
-            changeAAT(model, spline_coef)
+            
+            # changeMEM(model, synapse)
+            # changeAAT(model, spline_coef)
             train_loss += loss.item()
             accuracy = (output.argmax(dim=1) == labels.to(device)).float().mean().item()
             train_accuracy += accuracy
             pbar.set_postfix(loss=loss.item(), accuracy=accuracy, lr=optimizer.param_groups[0]['lr'])
+    # 更新学习率 (移到 epoch 级别)
+    scheduler.step()
 
     train_loss /= len(trainloader)
     train_accuracy /= len(trainloader)
@@ -360,6 +361,8 @@ for epoch in range(50):
     val_loss = 0
     val_accuracy = 0
     with torch.no_grad():
+        changeMEM(model, synapse)
+        changeAAT(model, spline_coef)
         for images, labels in valloader:
             images = images.view(-1, 28 * 28).to(device)
             output = model(images)
