@@ -27,14 +27,17 @@ from tqdm import tqdm
 
 '''Please import the actually measured device (memristors & GMCs) data manually.'''
 # Load memristor conductance data
-df = pd.read_excel('memristor conductance.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+#df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\memristor conductance.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\memristor conductance.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 memData = df.to_numpy().flatten()
 memData = (memData - min(memData)) / (max(memData) - min(memData))
 memDiffMat = np.subtract.outer(memData, memData)
 mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
+
 # Load GMC peak current data
-df = pd.read_excel('GMC peak current.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+#df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='usecol', nrows='nrows', header=None)
+df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 aatData = df.to_numpy().flatten()
 aatData = (aatData - min(aatData)) / (max(aatData) - min(aatData))
 aatDiffMat = np.subtract.outer(aatData, aatData)
@@ -61,6 +64,9 @@ def changeAAT(model, spline_coef):
             new_tensor = spline_coef[index].reshape(tensor.shape)
             param.data.copy_(new_tensor)
 
+sigma1 = 0.2
+sigma2 = 0.2
+k = 2.0
 
 class KANLinear(torch.nn.Module):
     def __init__(
@@ -74,8 +80,8 @@ class KANLinear(torch.nn.Module):
             base_activation=torch.nn.ReLU,
             grid_range=[-1, 1],  # Default
             spline_weight_init_scale=0.1,
-            sigma_left='sigma1 / k', # Import manually
-            sigma_right='sigma2 / k', # Import manually
+            sigma_left= sigma1 / k, # Import manually
+            sigma_right= sigma2 / k, # Import manually
     ):
         super(KANLinear, self).__init__()
 
@@ -224,11 +230,11 @@ class MLP(nn.Module):
                 x = self.activation(x)
         return x
 
-windows_size = 20
+windows_size = 20 #20
 
 model_KAN = KAN(
             layers_hidden=[windows_size, 5, 1],
-            grid_size=5
+            grid_size=10 #5
         )
 model_MLP_1 = MLP(layers_hidden=[windows_size, 5, 1])
 model_MLP_2 = MLP(layers_hidden=[windows_size, 50, 50, 1])
@@ -272,7 +278,7 @@ for epoch in range(epochs):
     optimizer_MLP_1.zero_grad()
     loss_MLP_1.backward()
     optimizer_MLP_1.step()
-    changeMEM(model_MLP_1, synapse)
+    # changeMEM(model_MLP_1, synapse)
 
     if (epoch + 1) % 100 == 0:
         print(f'Epoch {epoch + 1}, Loss: {loss_MLP_1.item()}')
@@ -325,7 +331,7 @@ for epoch in range(epochs):
     optimizer_MLP_2.zero_grad()
     loss_MLP_2.backward()
     optimizer_MLP_2.step()
-    changeMEM(model_MLP_2, synapse)
+    #changeMEM(model_MLP_2, synapse)
     if (epoch + 1) % 100 == 0:
         print(f'Epoch {epoch + 1}, Loss: {loss_MLP_2.item()}')
 model_MLP_2.eval()
@@ -378,7 +384,7 @@ for epoch in range(epochs):
     optimizer_MLP_2.zero_grad()
     loss_MLP_2.backward()
     optimizer_MLP_2.step()
-    changeMEM(model_MLP_2, synapse)
+    # changeMEM(model_MLP_2, synapse)
     # changeAAT(model_MLP, spline_coef)
 
     if (epoch + 1) % 100 == 0:
@@ -435,8 +441,8 @@ for epoch in range(epochs):
     optimizer_KAN.zero_grad()
     loss_KAN.backward()
     optimizer_KAN.step()
-    changeMEM(model_KAN, synapse)
-    changeAAT(model_KAN, spline_coef)
+    # changeMEM(model_KAN, synapse)
+    # changeAAT(model_KAN, spline_coef)
     if (epoch + 1) % 100 == 0:
         print(f'Epoch {epoch + 1}, Loss: {loss_KAN.item()}')
 
@@ -445,16 +451,21 @@ y_pre = model_KAN(X_train_tensor)
 y_pred_train_kan = y_pre.detach().numpy()
 x = y_pre.detach().numpy()[-windows_size:]
 pred = []
-for i in range(split_idx, len(data)-windows_size):
+for i in range(split_idx, len(data) - windows_size):
     pre = model_KAN(torch.Tensor(x).unsqueeze(0))
     y_pred = pre.detach().numpy()
     x = np.append(x[1:], y_pred).reshape((windows_size, 1))
     pred.append(y_pred)
+
 pred_kan_test = np.array(pred).squeeze(-1).squeeze(-1)
 print(pred_kan_test.shape)
-rmse_kan = np.sqrt(np.mean((pred_kan_test - y_test)**2))
-print(f'Test RMSE_2: {rmse_kan}')
+
+rmse_kan = np.sqrt(np.mean((pred_kan_test - y_test) ** 2))
+print(f'Test RMSE_KAN: {rmse_kan}')  # 这里顺手把打印提示的RMSE_2改成了RMSE_KAN，方便区分
+
 plt.figure(figsize=(12, 10))
+
+# 第一个子图：训练集结果
 plt.subplot(2, 1, 1)
 plt.plot(y_train, label='train_label', color='green')
 plt.plot(outputs.detach().numpy(), label='kan_train_pred', color='yellow', linestyle='--')
@@ -462,14 +473,19 @@ plt.title('Mackey-Glass Training Prediction (KAN)')
 plt.xlabel('Time Step')
 plt.ylabel('Normalized Value')
 plt.legend()
+
+# 第二个子图：测试集结果（这里加上了声明）
+plt.subplot(2, 1, 2)
 plt.plot(y_test, label='test_label', color='blue')
 plt.plot(pred_kan_test, label='kan_pred', color='red', linestyle='--')
 plt.title('Mackey-Glass Testing Prediction (KAN)')
 plt.xlabel('Time Step')
 plt.ylabel('Normalized Value')
 plt.legend()
+
 plt.tight_layout()
 plt.show()
+
 train_dt = np.array([y_train.reshape(-1), y_pred_train_mlp_1.reshape(-1),y_pred_train_mlp_2.reshape(-1), y_pred_train_kan.reshape(-1)]).T
 train_dt = pd.DataFrame(train_dt, columns=['label', 'mlp1', 'mlp2', 'kan'])
 train_dt.to_csv(f'./series_train.csv')

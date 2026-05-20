@@ -38,8 +38,9 @@ memData = (memData - min(memData)) / (max(memData) - min(memData))
 memDiffMat = np.subtract.outer(memData, memData)
 mem_synapse = np.unique(memDiffMat.flatten())
 synapse = torch.tensor(mem_synapse)
-
+print('synapse: ',synapse.shape[0])
 # Load GMC peak current data
+
 df = pd.read_excel(r'E:\download\GMCSimu-main\GMCSimu-main\GMC peak current.xlsx', sheet_name='sheet_name', usecols='A', header=None)
 aatData = df.to_numpy().flatten()
 aatData = (aatData - min(aatData)) / (max(aatData) - min(aatData))
@@ -57,15 +58,18 @@ def changeMEM(model, synapse):
             new_tensor = synapse[index].reshape(tensor.shape)
             param.data.copy_(new_tensor)
 
+#为一个“差分权重矩阵”建立一个快速的反向查找表
 def _build_diff_lookup(aatDiffMat: np.ndarray):
     vals = aatDiffMat.reshape(-1)
     uniq_vals, first_pos = np.unique(vals, return_index=True)
-    rows = first_pos // aatDiffMat.shape[1]
-    cols = first_pos %  aatDiffMat.shape[1]
+    rows = first_pos // aatDiffMat.shape[1] #(整除) 计算出该元素在第几行
+    cols = first_pos %  aatDiffMat.shape[1] #(取余) 计算出该元素在第几列
+    # 组合坐标并生成字典
     uniq_idx = np.stack([rows, cols], axis=1)
     val2idx = {float(v): (int(r), int(c)) for v, (r,c) in zip(uniq_vals, uniq_idx)}
     return val2idx, uniq_vals, uniq_idx
 
+#模拟物理器件在实际工作中的“读噪声”（Read Noise）或“器件失配”（Device Variation）
 def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
                                      aatData: np.ndarray,
                                      aatDiffMat: np.ndarray,
@@ -76,7 +80,7 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
     val2idx, uniq_vals, uniq_idx = _build_diff_lookup(aatDiffMat)
     new_vals = np.empty_like(cvals, dtype=np.float64)
     Z = np.random.normal(0.0, CV_amp, size=(cvals.size, 2))
-
+    #寻找最接近的物理映射
     for i, cv in enumerate(cvals):
         idx_pair = None
         if cv in val2idx:
@@ -94,6 +98,8 @@ def _perturb_coefficients_from_cvals(cvals_np: np.ndarray,
         rr, cc = idx_pair
         a_val = float(aatData[rr])
         b_val = float(aatData[cc])
+
+        #注入差分对乘性噪声
         a_pertb = a_val + a_val * Z[i, 0]
         b_pertb = b_val + b_val * Z[i, 1]
         new_vals[i] = a_pertb - b_pertb
