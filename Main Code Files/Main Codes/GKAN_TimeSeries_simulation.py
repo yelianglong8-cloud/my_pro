@@ -229,266 +229,266 @@ class MLP(nn.Module):
             if i < len(self.layers) - 1 and not isinstance(layer, nn.Dropout):
                 x = self.activation(x)
         return x
+if __name__ == '__main__':
+    windows_size = 20 #20
 
-windows_size = 20 #20
+    model_KAN = KAN(
+                layers_hidden=[windows_size, 5, 1],
+                grid_size=10 #5
+            )
+    model_MLP_1 = MLP(layers_hidden=[windows_size, 5, 1])
+    model_MLP_2 = MLP(layers_hidden=[windows_size, 50, 50, 1])
+    optimizer_KAN = torch.optim.AdamW(model_KAN.parameters(), lr=0.01)
+    optimizer_MLP_1 = torch.optim.AdamW(model_MLP_1.parameters(), lr=0.01)
+    optimizer_MLP_2 = torch.optim.AdamW(model_MLP_2.parameters(), lr=0.01)
+    criterion_kan = nn.MSELoss()
+    criterion_mlp_1 = nn.MSELoss()
+    criterion_mlp_2 = nn.MSELoss()
 
-model_KAN = KAN(
-            layers_hidden=[windows_size, 5, 1],
-            grid_size=10 #5
-        )
-model_MLP_1 = MLP(layers_hidden=[windows_size, 5, 1])
-model_MLP_2 = MLP(layers_hidden=[windows_size, 50, 50, 1])
-optimizer_KAN = torch.optim.AdamW(model_KAN.parameters(), lr=0.01)
-optimizer_MLP_1 = torch.optim.AdamW(model_MLP_1.parameters(), lr=0.01)
-optimizer_MLP_2 = torch.optim.AdamW(model_MLP_2.parameters(), lr=0.01)
-criterion_kan = nn.MSELoss()
-criterion_mlp_1 = nn.MSELoss()
-criterion_mlp_2 = nn.MSELoss()
+    def Mackey_Glass(T, a=0.2, b=0.1, c=10, tau=18):
+      x=np.arange(0,T+tau+1,dtype=np.float64)
+      for t in range(tau,tau+T):
+        x[t+1]=x[t]+(-b*x[t]+a*x[t-tau]/(1+x[t-tau]**c))
+      return x[tau:]
 
-def Mackey_Glass(T, a=0.2, b=0.1, c=10, tau=18):
-  x=np.arange(0,T+tau+1,dtype=np.float64)
-  for t in range(tau,tau+T):
-    x[t+1]=x[t]+(-b*x[t]+a*x[t-tau]/(1+x[t-tau]**c))
-  return x[tau:]
+    data = Mackey_Glass(T=1000)
+    def create_dataset(data, window_size=5):
+        X, y = [], []
+        for i in range(len(data) - window_size):
+            X.append(data[i:i+window_size])
+            y.append(data[i+window_size])
+        return np.array(X), np.array(y)
 
-data = Mackey_Glass(T=1000)
-def create_dataset(data, window_size=5):
-    X, y = [], []
-    for i in range(len(data) - window_size):
-        X.append(data[i:i+window_size])
-        y.append(data[i+window_size])
-    return np.array(X), np.array(y)
+    X, y = create_dataset(data, windows_size)
+    split_ratio = 0.8
+    split_idx = int(len(X) * split_ratio)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
+    y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
+    y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
+    epochs = 1000
+    changeMEM(model_MLP_1, spline_coef)
+    for epoch in range(epochs):
+        model_MLP_1.train()
+        # print(X_train_tensor.shape)
+        outputs = model_MLP_1(X_train_tensor)
+        loss_MLP_1 = criterion_mlp_1(outputs, y_train_tensor)
+        optimizer_MLP_1.zero_grad()
+        loss_MLP_1.backward()
+        optimizer_MLP_1.step()
+        # changeMEM(model_MLP_1, synapse)
 
-X, y = create_dataset(data, windows_size)
-split_ratio = 0.8
-split_idx = int(len(X) * split_ratio)
-X_train, X_test = X[:split_idx], X[split_idx:]
-y_train, y_test = y[:split_idx], y[split_idx:]
-X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
-y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
-X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
-y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
-epochs = 1000
-changeMEM(model_MLP_1, spline_coef)
-for epoch in range(epochs):
-    model_MLP_1.train()
-    # print(X_train_tensor.shape)
-    outputs = model_MLP_1(X_train_tensor)
-    loss_MLP_1 = criterion_mlp_1(outputs, y_train_tensor)
-    optimizer_MLP_1.zero_grad()
-    loss_MLP_1.backward()
-    optimizer_MLP_1.step()
-    # changeMEM(model_MLP_1, synapse)
+        if (epoch + 1) % 100 == 0:
+            print(f'Epoch {epoch + 1}, Loss: {loss_MLP_1.item()}')
 
-    if (epoch + 1) % 100 == 0:
-        print(f'Epoch {epoch + 1}, Loss: {loss_MLP_1.item()}')
+    model_MLP_1.eval()
+    y_pre = model_MLP_1(X_train_tensor)
+    y_pred_train_mlp_1 = y_pre.detach().numpy()
+    x = y_pre.detach().numpy()[-windows_size:] # 取决于windows_size
+    pred_1 = []
+    for i in range(split_idx, len(data)-windows_size):
+        pre = model_MLP_1(torch.Tensor(x).unsqueeze(0))
+        y_pred_1 = pre.detach().numpy()
+        x = np.append(x[1:], y_pred_1).reshape((windows_size, 1))
+        pred_1.append(y_pred_1)
 
-model_MLP_1.eval()
-y_pre = model_MLP_1(X_train_tensor)
-y_pred_train_mlp_1 = y_pre.detach().numpy()
-x = y_pre.detach().numpy()[-windows_size:] # 取决于windows_size
-pred_1 = []
-for i in range(split_idx, len(data)-windows_size):
-    pre = model_MLP_1(torch.Tensor(x).unsqueeze(0))
-    y_pred_1 = pre.detach().numpy()
-    x = np.append(x[1:], y_pred_1).reshape((windows_size, 1))
-    pred_1.append(y_pred_1)
+    pred_mlp_1_test = np.array(pred_1).squeeze(-1).squeeze(-1)
 
-pred_mlp_1_test = np.array(pred_1).squeeze(-1).squeeze(-1)
+    rmse_mlp_1 = np.sqrt(np.mean((pred_mlp_1_test - y_test)**2))
+    print(f'Test RMSE_2: {rmse_mlp_1}')
 
-rmse_mlp_1 = np.sqrt(np.mean((pred_mlp_1_test - y_test)**2))
-print(f'Test RMSE_2: {rmse_mlp_1}')
+    plt.figure(figsize=(12, 10))
+    plt.subplot(2, 1, 1)
+    plt.plot(y_train, label='train_label', color='green')
+    plt.plot(outputs.detach().numpy(), label='mlp_1_train_pred', color='yellow', linestyle='--')
+    plt.title('Mackey-Glass Training Prediction (mlp_1)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
+    plt.subplot(2, 1, 2)
+    plt.plot(y_test, label='test_label', color='blue')
+    plt.plot(pred_mlp_1_test, label='mlp_1_pred', color='red', linestyle='--')
+    plt.title('Mackey-Glass Testing Prediction (mlp_1)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-plt.figure(figsize=(12, 10))
-plt.subplot(2, 1, 1)
-plt.plot(y_train, label='train_label', color='green')
-plt.plot(outputs.detach().numpy(), label='mlp_1_train_pred', color='yellow', linestyle='--')
-plt.title('Mackey-Glass Training Prediction (mlp_1)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
-plt.subplot(2, 1, 2)
-plt.plot(y_test, label='test_label', color='blue')
-plt.plot(pred_mlp_1_test, label='mlp_1_pred', color='red', linestyle='--')
-plt.title('Mackey-Glass Testing Prediction (mlp_1)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
-plt.tight_layout()
-plt.show()
+    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
+    y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
+    y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
+    epochs = 1000
+    changeMEM(model_MLP_2, spline_coef)
+    for epoch in range(epochs):
+        model_MLP_2.train()
+        # print(X_train_tensor.shape)
+        outputs = model_MLP_2(X_train_tensor)
+        loss_MLP_2 = criterion_mlp_2(outputs, y_train_tensor)
+        optimizer_MLP_2.zero_grad()
+        loss_MLP_2.backward()
+        optimizer_MLP_2.step()
+        #changeMEM(model_MLP_2, synapse)
+        if (epoch + 1) % 100 == 0:
+            print(f'Epoch {epoch + 1}, Loss: {loss_MLP_2.item()}')
+    model_MLP_2.eval()
+    y_pre = model_MLP_2(X_train_tensor)
+    y_pred_train_mlp_2 = y_pre.detach().numpy()
+    x = y_pre.detach().numpy()[-windows_size:]
+    pred_2 = []
+    for i in range(split_idx, len(data)-windows_size):
+        pre = model_MLP_2(torch.Tensor(x).unsqueeze(0))
+        y_pred_2 = pre.detach().numpy()
+        x = np.append(x[1:], y_pred_2).reshape((windows_size, 1))
+        pred_2.append(y_pred_2)
 
-X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
-y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
-X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
-y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
-epochs = 1000
-changeMEM(model_MLP_2, spline_coef)
-for epoch in range(epochs):
-    model_MLP_2.train()
-    # print(X_train_tensor.shape)
-    outputs = model_MLP_2(X_train_tensor)
-    loss_MLP_2 = criterion_mlp_2(outputs, y_train_tensor)
-    optimizer_MLP_2.zero_grad()
-    loss_MLP_2.backward()
-    optimizer_MLP_2.step()
-    #changeMEM(model_MLP_2, synapse)
-    if (epoch + 1) % 100 == 0:
-        print(f'Epoch {epoch + 1}, Loss: {loss_MLP_2.item()}')
-model_MLP_2.eval()
-y_pre = model_MLP_2(X_train_tensor)
-y_pred_train_mlp_2 = y_pre.detach().numpy()
-x = y_pre.detach().numpy()[-windows_size:]
-pred_2 = []
-for i in range(split_idx, len(data)-windows_size):
-    pre = model_MLP_2(torch.Tensor(x).unsqueeze(0))
-    y_pred_2 = pre.detach().numpy()
-    x = np.append(x[1:], y_pred_2).reshape((windows_size, 1))
-    pred_2.append(y_pred_2)
+    pred_mlp_2_test = np.array(pred_2).squeeze(-1).squeeze(-1)
 
-pred_mlp_2_test = np.array(pred_2).squeeze(-1).squeeze(-1)
+    rmse_mlp_2 = np.sqrt(np.mean((pred_mlp_2_test - y_test)**2))
+    print(f'Test RMSE_2: {rmse_mlp_2}')
 
-rmse_mlp_2 = np.sqrt(np.mean((pred_mlp_2_test - y_test)**2))
-print(f'Test RMSE_2: {rmse_mlp_2}')
+    plt.figure(figsize=(12, 10))
+    plt.subplot(2, 1, 1)
+    plt.plot(y_train, label='train_label', color='green')
+    plt.plot(outputs.detach().numpy(), label='mlp_2_train_pred', color='yellow', linestyle='--')
+    plt.title('Mackey-Glass Training Prediction (mlp_2)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
+    plt.subplot(2, 1, 2)
+    plt.plot(y_test, label='test_label', color='blue')
+    plt.plot(pred_mlp_2_test, label='mlp_2_pred', color='red', linestyle='--')
+    plt.title('Mackey-Glass Testing Prediction (mlp_2)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
 
-plt.figure(figsize=(12, 10))
-plt.subplot(2, 1, 1)
-plt.plot(y_train, label='train_label', color='green')
-plt.plot(outputs.detach().numpy(), label='mlp_2_train_pred', color='yellow', linestyle='--')
-plt.title('Mackey-Glass Training Prediction (mlp_2)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
-plt.subplot(2, 1, 2)
-plt.plot(y_test, label='test_label', color='blue')
-plt.plot(pred_mlp_2_test, label='mlp_2_pred', color='red', linestyle='--')
-plt.title('Mackey-Glass Testing Prediction (mlp_2)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-plt.tight_layout()
-plt.show()
+    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
+    y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
+    y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
+    epochs = 1000
+    changeMEM(model_MLP_2, spline_coef)
+    for epoch in range(epochs):
+        model_MLP_2.train()
+        # print(X_train_tensor.shape)
+        outputs = model_MLP_2(X_train_tensor)
+        loss_MLP_2 = criterion_mlp_2(outputs, y_train_tensor)
 
-X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
-y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
-X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
-y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
-epochs = 1000
-changeMEM(model_MLP_2, spline_coef)
-for epoch in range(epochs):
-    model_MLP_2.train()
-    # print(X_train_tensor.shape)
-    outputs = model_MLP_2(X_train_tensor)
-    loss_MLP_2 = criterion_mlp_2(outputs, y_train_tensor)
+        optimizer_MLP_2.zero_grad()
+        loss_MLP_2.backward()
+        optimizer_MLP_2.step()
+        # changeMEM(model_MLP_2, synapse)
+        # changeAAT(model_MLP, spline_coef)
 
-    optimizer_MLP_2.zero_grad()
-    loss_MLP_2.backward()
-    optimizer_MLP_2.step()
-    # changeMEM(model_MLP_2, synapse)
-    # changeAAT(model_MLP, spline_coef)
+        if (epoch + 1) % 100 == 0:
+            print(f'Epoch {epoch + 1}, Loss: {loss_MLP_2.item()}')
 
-    if (epoch + 1) % 100 == 0:
-        print(f'Epoch {epoch + 1}, Loss: {loss_MLP_2.item()}')
+    model_MLP_2.eval()
+    y_pre = model_MLP_2(X_train_tensor)
+    y_pred_train_mlp_2 = y_pre.detach().numpy()
+    x = y_pre.detach().numpy()[-windows_size:]
+    pred_2 = []
+    for i in range(split_idx, len(data)-windows_size):
+        pre = model_MLP_2(torch.Tensor(x).unsqueeze(0))
+        y_pred_2 = pre.detach().numpy()
+        x = np.append(x[1:], y_pred_2).reshape((windows_size, 1))
+        pred_2.append(y_pred_2)
 
-model_MLP_2.eval()
-y_pre = model_MLP_2(X_train_tensor)
-y_pred_train_mlp_2 = y_pre.detach().numpy()
-x = y_pre.detach().numpy()[-windows_size:]
-pred_2 = []
-for i in range(split_idx, len(data)-windows_size):
-    pre = model_MLP_2(torch.Tensor(x).unsqueeze(0))
-    y_pred_2 = pre.detach().numpy()
-    x = np.append(x[1:], y_pred_2).reshape((windows_size, 1))
-    pred_2.append(y_pred_2)
+    pred_mlp_2_test = np.array(pred_2).squeeze(-1).squeeze(-1)
 
-pred_mlp_2_test = np.array(pred_2).squeeze(-1).squeeze(-1)
+    rmse_mlp_2 = np.sqrt(np.mean((pred_mlp_2_test - y_test)**2))
+    print(f'Test RMSE_2: {rmse_mlp_2}')
 
-rmse_mlp_2 = np.sqrt(np.mean((pred_mlp_2_test - y_test)**2))
-print(f'Test RMSE_2: {rmse_mlp_2}')
+    plt.figure(figsize=(12, 10))
+    plt.subplot(2, 1, 1)
+    plt.plot(y_train, label='train_label', color='green')
+    plt.plot(outputs.detach().numpy(), label='mlp_2_train_pred', color='yellow', linestyle='--')
+    plt.title('Mackey-Glass Training Prediction (mlp_2)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
+    plt.subplot(2, 1, 2)
+    plt.plot(y_test, label='test_label', color='blue')
+    plt.plot(pred_mlp_2_test, label='mlp_2_pred', color='red', linestyle='--')
+    plt.title('Mackey-Glass Testing Prediction (mlp_2)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
 
-plt.figure(figsize=(12, 10))
-plt.subplot(2, 1, 1)
-plt.plot(y_train, label='train_label', color='green')
-plt.plot(outputs.detach().numpy(), label='mlp_2_train_pred', color='yellow', linestyle='--')
-plt.title('Mackey-Glass Training Prediction (mlp_2)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
-plt.subplot(2, 1, 2)
-plt.plot(y_test, label='test_label', color='blue')
-plt.plot(pred_mlp_2_test, label='mlp_2_pred', color='red', linestyle='--')
-plt.title('Mackey-Glass Testing Prediction (mlp_2)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-plt.tight_layout()
-plt.show()
+    X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
+    y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
+    X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
+    y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
 
-X_train_tensor = torch.FloatTensor(X_train).unsqueeze(2)
-y_train_tensor = torch.FloatTensor(y_train).unsqueeze(1)
-X_test_tensor = torch.FloatTensor(X_test).unsqueeze(2)
-y_test_tensor = torch.FloatTensor(y_test).unsqueeze(1)
+    epochs = 1000
+    changeMEM(model_KAN, synapse)
+    changeAAT(model_KAN, spline_coef)
+    for epoch in range(epochs):
+        model_KAN.train()
+        # print(X_train_tensor.shape)
+        outputs = model_KAN(X_train_tensor)
+        loss_KAN = criterion_kan(outputs, y_train_tensor)
+        optimizer_KAN.zero_grad()
+        loss_KAN.backward()
+        optimizer_KAN.step()
+        # changeMEM(model_KAN, synapse)
+        # changeAAT(model_KAN, spline_coef)
+        if (epoch + 1) % 100 == 0:
+            print(f'Epoch {epoch + 1}, Loss: {loss_KAN.item()}')
 
-epochs = 1000
-changeMEM(model_KAN, synapse)
-changeAAT(model_KAN, spline_coef)
-for epoch in range(epochs):
-    model_KAN.train()
-    # print(X_train_tensor.shape)
-    outputs = model_KAN(X_train_tensor)
-    loss_KAN = criterion_kan(outputs, y_train_tensor)
-    optimizer_KAN.zero_grad()
-    loss_KAN.backward()
-    optimizer_KAN.step()
-    # changeMEM(model_KAN, synapse)
-    # changeAAT(model_KAN, spline_coef)
-    if (epoch + 1) % 100 == 0:
-        print(f'Epoch {epoch + 1}, Loss: {loss_KAN.item()}')
+    model_KAN.eval()
+    y_pre = model_KAN(X_train_tensor)
+    y_pred_train_kan = y_pre.detach().numpy()
+    x = y_pre.detach().numpy()[-windows_size:]
+    pred = []
+    for i in range(split_idx, len(data) - windows_size):
+        pre = model_KAN(torch.Tensor(x).unsqueeze(0))
+        y_pred = pre.detach().numpy()
+        x = np.append(x[1:], y_pred).reshape((windows_size, 1))
+        pred.append(y_pred)
 
-model_KAN.eval()
-y_pre = model_KAN(X_train_tensor)
-y_pred_train_kan = y_pre.detach().numpy()
-x = y_pre.detach().numpy()[-windows_size:]
-pred = []
-for i in range(split_idx, len(data) - windows_size):
-    pre = model_KAN(torch.Tensor(x).unsqueeze(0))
-    y_pred = pre.detach().numpy()
-    x = np.append(x[1:], y_pred).reshape((windows_size, 1))
-    pred.append(y_pred)
+    pred_kan_test = np.array(pred).squeeze(-1).squeeze(-1)
+    print(pred_kan_test.shape)
 
-pred_kan_test = np.array(pred).squeeze(-1).squeeze(-1)
-print(pred_kan_test.shape)
+    rmse_kan = np.sqrt(np.mean((pred_kan_test - y_test) ** 2))
+    print(f'Test RMSE_KAN: {rmse_kan}')  # 这里顺手把打印提示的RMSE_2改成了RMSE_KAN，方便区分
 
-rmse_kan = np.sqrt(np.mean((pred_kan_test - y_test) ** 2))
-print(f'Test RMSE_KAN: {rmse_kan}')  # 这里顺手把打印提示的RMSE_2改成了RMSE_KAN，方便区分
+    plt.figure(figsize=(12, 10))
 
-plt.figure(figsize=(12, 10))
+    # 第一个子图：训练集结果
+    plt.subplot(2, 1, 1)
+    plt.plot(y_train, label='train_label', color='green')
+    plt.plot(outputs.detach().numpy(), label='kan_train_pred', color='yellow', linestyle='--')
+    plt.title('Mackey-Glass Training Prediction (KAN)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
 
-# 第一个子图：训练集结果
-plt.subplot(2, 1, 1)
-plt.plot(y_train, label='train_label', color='green')
-plt.plot(outputs.detach().numpy(), label='kan_train_pred', color='yellow', linestyle='--')
-plt.title('Mackey-Glass Training Prediction (KAN)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
+    # 第二个子图：测试集结果（这里加上了声明）
+    plt.subplot(2, 1, 2)
+    plt.plot(y_test, label='test_label', color='blue')
+    plt.plot(pred_kan_test, label='kan_pred', color='red', linestyle='--')
+    plt.title('Mackey-Glass Testing Prediction (KAN)')
+    plt.xlabel('Time Step')
+    plt.ylabel('Normalized Value')
+    plt.legend()
 
-# 第二个子图：测试集结果（这里加上了声明）
-plt.subplot(2, 1, 2)
-plt.plot(y_test, label='test_label', color='blue')
-plt.plot(pred_kan_test, label='kan_pred', color='red', linestyle='--')
-plt.title('Mackey-Glass Testing Prediction (KAN)')
-plt.xlabel('Time Step')
-plt.ylabel('Normalized Value')
-plt.legend()
+    plt.tight_layout()
+    plt.show()
 
-plt.tight_layout()
-plt.show()
-
-train_dt = np.array([y_train.reshape(-1), y_pred_train_mlp_1.reshape(-1),y_pred_train_mlp_2.reshape(-1), y_pred_train_kan.reshape(-1)]).T
-train_dt = pd.DataFrame(train_dt, columns=['label', 'mlp1', 'mlp2', 'kan'])
-train_dt.to_csv(f'./series_train.csv')
-test_dt = np.array([y_test.reshape(-1), pred_mlp_1_test.reshape(-1), pred_mlp_2_test.reshape(-1), pred_kan_test.reshape(-1)]).T
-test_dt = pd.DataFrame(test_dt, columns=['label', f'mlp_1={rmse_mlp_1}', f'mlp_2={rmse_mlp_2}', f'kan_{rmse_kan}'])
-test_dt.to_csv(f'./series_test.csv')
+    train_dt = np.array([y_train.reshape(-1), y_pred_train_mlp_1.reshape(-1),y_pred_train_mlp_2.reshape(-1), y_pred_train_kan.reshape(-1)]).T
+    train_dt = pd.DataFrame(train_dt, columns=['label', 'mlp1', 'mlp2', 'kan'])
+    train_dt.to_csv(f'./series_train.csv')
+    test_dt = np.array([y_test.reshape(-1), pred_mlp_1_test.reshape(-1), pred_mlp_2_test.reshape(-1), pred_kan_test.reshape(-1)]).T
+    test_dt = pd.DataFrame(test_dt, columns=['label', f'mlp_1={rmse_mlp_1}', f'mlp_2={rmse_mlp_2}', f'kan_{rmse_kan}'])
+    test_dt.to_csv(f'./series_test.csv')

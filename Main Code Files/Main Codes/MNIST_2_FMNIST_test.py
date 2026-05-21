@@ -30,6 +30,7 @@ import os
 from openpyxl import load_workbook
 import torch.nn.functional as F
 import numpy as np
+from GKAN_TimeSeries_simulation import MLP
 
 class KANLinear(torch.nn.Module):
     def __init__(self, in_features, out_features, grid_size=4, spline_order=3, scale_noise=0.1,
@@ -115,7 +116,8 @@ transform_fmnist = transforms.Compose([
 trainset_fmnist = torchvision.datasets.FashionMNIST(root="./data", train=True, download=True, transform=transform_fmnist)
 trainloader_fmnist = DataLoader(trainset_fmnist, batch_size=64, shuffle=True)
 
-model = KAN([28 * 28, 100, 10]) # Define network size
+# model = KAN([28 * 28, 100, 10]) # Define network size
+model = MLP(layers_hidden=[28 * 28, 100, 10])
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
 optimizer = optim.SGD(model.parameters(), lr=0.05, weight_decay=1e-4) # The actual hyperparameters are specified in the subsequent code
@@ -187,7 +189,7 @@ for epoch in range(20):
     if epoch < 10:
         loader = trainloader_mnist  # MNIST is used in the first 10 epochs.
         for param_group in optimizer.param_groups:
-            param_group['lr'] = 0.1
+            param_group['lr'] = 0.01
     else:
         loader = trainloader_fmnist  # Fashion-MNIST is used in the subsequent 10 epochs.
         for param_group in optimizer.param_groups:
@@ -202,8 +204,8 @@ for epoch in range(20):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        changeMEM(model, synapse) # training the memristor array (residual connections)
-        changeAAT(model, spline_coef) # training the GMC array
+        # changeMEM(model, synapse) # training the memristor array (residual connections)
+        # changeAAT(model, spline_coef) # training the GMC array
     accuracy_mnist = calculate_accuracy(model, trainloader_mnist)
     accuracy_fmnist = calculate_accuracy(model, trainloader_fmnist)
     train_accuracies_mnist.append(accuracy_mnist)
